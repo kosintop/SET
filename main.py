@@ -1,19 +1,55 @@
 from requests import request
 from bs4 import BeautifulSoup
 
+from IO.writer import write_to_txt
+
+SET100_URL = 'https://marketdata.set.or.th/mkt/sectorquotation.do?sector=SET&language=en&country=TH'
 SSET_URL = 'https://marketdata.set.or.th/mkt/sectorquotation.do?sector=sSET&language=en&country=TH'
 MAI_URL = 'https://marketdata.set.or.th/mkt/sectorquotation.do?sector=MAI&language=th&country=TH'
 
 
 def main():
     symbol_list = []
+    symbol_list += get_symbol_list(SET100_URL)
     symbol_list += get_symbol_list(SSET_URL)
     symbol_list += get_symbol_list(MAI_URL)
 
-    fact_sheet = get_factsheet(symbol_list[0])
-    income_statement_table = get_income_statement_table(fact_sheet)
-    sales = get_table_value(income_statement_table,1,label='Sales')
-    print(sales)
+    result_list = []
+
+    for symbol in symbol_list:
+        print('start ', symbol)
+        result_list.append({
+            'symbol':symbol
+        })
+        result_list[-1].update(calculate_peg(symbol))
+        print('finish', symbol)
+    write_to_txt(result_list)
+    pass
+
+
+
+
+def calculate_peg(symbol):
+
+    fact_sheet = get_factsheet(symbol)
+    growth_table = get_growth_table(fact_sheet)
+    revenue_growth = get_table_value(growth_table,1 , row_index=1)
+    summary_table = get_summary_table(fact_sheet)
+
+    price = get_table_value(summary_table,0,row_index=1)
+    pe = get_table_value(summary_table,2,row_index=1)
+
+    try:
+        peg = '%.2f' % (float(pe)/float(revenue_growth)*100)
+    except:
+        peg = 'N/A'
+
+    return {
+        'price':price,
+        'pe':pe,
+        'revenue_growth':revenue_growth,
+        'peg':peg
+    }
 
 
 def get_symbol_list(url):
@@ -43,7 +79,7 @@ def get_factsheet(symbol):
 
 
 def get_summary_table(factsheet: BeautifulSoup):
-    tag = factsheet.find('Price(B.)')
+    tag = factsheet.find(string='Price (B.)')
     return find_parent_table(tag)
 
 
@@ -57,18 +93,25 @@ def get_balance_sheet_table(factsheet: BeautifulSoup):
     return find_parent_table(tag)
 
 
-def find_parent_table(tag):
-    if tag.parent is None:
-        raise Exception('no income statement table found')
+def get_growth_table(factsheet: BeautifulSoup):
+    tag = factsheet.find(string='Growth Rate (%)')
+    return find_parent_table(tag)
 
+
+def find_parent_table(tag):
+    if tag is None or tag.parent is None:
+        return None
     while tag.parent.name != 'table':
         tag = tag.parent
         if tag is None:
-            raise Exception('no income statement table found')
+            return None
     return tag.parent
 
 
 def get_table_value(table: BeautifulSoup,col_index,label=None,row_index=None):
+    if table is None:
+        return None
+
     if label:
         row = table.find(string=label).parent.parent
         return row.find_all('td')[col_index].text.strip()
